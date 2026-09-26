@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from unittest import mock
 
+import pytest
 from click.testing import CliRunner
 
 from openjarvis.cli import cli
@@ -186,6 +187,54 @@ class TestAskModelResolution:
             )
         assert result.exit_code == 0, result.output
         assert engine.generate.call_args.kwargs["model"] == "qwen2.5-coder:7b"
+
+    @pytest.mark.parametrize("unavailable_setting", ["default", "fallback"])
+    def test_router_excludes_models_missing_from_active_engine(
+        self, unavailable_setting: str
+    ) -> None:
+        """Routing must not choose a configured model absent from this engine."""
+        engine = _mock_engine()
+        patches = _patch_engine(engine)
+        available_model = "llama3.2:3b"
+        unavailable_model = "qwen2.5-coder:7b"
+        with (
+            patches[0],
+            patches[1],
+            mock.patch.object(
+                _ask_mod,
+                "discover_models",
+                return_value={"mock": [available_model]},
+            ),
+            patches[3],
+            patches[4],
+            patches[5],
+            mock.patch.object(
+                _ask_mod,
+                "load_config",
+                return_value=JarvisConfig(),
+            ) as mock_config,
+        ):
+            cfg = mock_config.return_value
+            cfg.telemetry.enabled = False
+            cfg.learning.enabled = True
+            cfg.learning.routing.policy = "heuristic"
+            cfg.intelligence.default_model = (
+                unavailable_model
+                if unavailable_setting == "default"
+                else available_model
+            )
+            cfg.intelligence.fallback_model = (
+                unavailable_model
+                if unavailable_setting == "fallback"
+                else available_model
+            )
+            cfg.agent.default_agent = ""
+            result = CliRunner().invoke(
+                cli,
+                ["ask", "Write a Python function to parse JSON: def parse(): pass"],
+            )
+        assert result.exit_code == 0, result.output
+        assert engine.generate.call_args.kwargs["model"] == available_model
 
     def test_router_selects_small_model_for_simple_query(self) -> None:
         """When routing is enabled, a low complexity query routes to smallest model."""

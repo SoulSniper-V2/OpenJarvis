@@ -980,37 +980,49 @@ def ask(
                 from openjarvis.learning.routing.router import build_routing_context
 
                 ensure_registered()
+                configured_default = config.intelligence.default_model
+                configured_fallback = config.intelligence.fallback_model
                 engine_models = all_models.get(engine_name, [])
+                available_models = set(engine_models)
+                # A configured fallback may belong to another engine.
                 candidates = list(
                     dict.fromkeys(
                         [
                             m
                             for m in [
-                                config.intelligence.default_model,
+                                configured_default,
                                 *engine_models,
-                                config.intelligence.fallback_model,
+                                configured_fallback,
                             ]
-                            if m
+                            if m and m in available_models
                         ]
                     )
                 )
                 if candidates and RouterPolicyRegistry.contains(
                     effective_router_policy
                 ):
+                    preferred_model = (
+                        configured_default
+                        if configured_default in available_models
+                        else candidates[0]
+                    )
+                    fallback_model = (
+                        configured_fallback
+                        if configured_fallback in available_models
+                        else candidates[0]
+                    )
                     policy = RouterPolicyRegistry.create(
                         effective_router_policy,
                         available_models=candidates,
-                        default_model=config.intelligence.default_model
-                        or candidates[0],
-                        fallback_model=config.intelligence.fallback_model
-                        or candidates[0],
+                        default_model=preferred_model,
+                        fallback_model=fallback_model,
                     )
-                    ctx = build_routing_context(
+                    routing_context = build_routing_context(
                         query_text,
-                        model=config.intelligence.default_model,
+                        model=preferred_model,
                     )
-                    selected = policy.select_model(ctx)
-                    if selected:
+                    selected = policy.select_model(routing_context)
+                    if selected in candidates:
                         logger.info(
                             "Router (%s) selected model %s for query",
                             effective_router_policy,
